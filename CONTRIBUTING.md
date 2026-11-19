@@ -36,4 +36,4 @@ With `--residual file`, the leaf stems plus `residual` must sum back to the inpu
 
 ## Releases
 
-Pushing a tag like `v0.2.0` triggers `.github/workflows/release.yml`. It checks that the app imports on Windows, packages the zip and publishes a GitHub release. Bump `__version__` in `stemsplitter/__init__.py` first.
+Releases are automatic. Bump `__version__` in `stemsplitter/__init__.py` (e.g. `0.2.0`) and push to `main`. `.github/workflows/release.yml` then checks that the app imports on Windows, packages `StemSplitter-v0.2.0-windows.zip`, and publishes the GitHub release with tag `v0.2.0`. Pushes that don't change the version don't create a release.

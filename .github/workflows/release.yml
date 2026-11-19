@@ -1,8 +1,12 @@
 name: Release
 
+# A release is published automatically whenever main carries a version (stemsplitter/__init__.py)
+# that has not been released yet. Pushing a matching v* tag works too.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -18,22 +22,35 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check version matches tag
+      - name: Read version
+        id: ver
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $v = (python -c "import stemsplitter; print(stemsplitter.__version__)").Trim()
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match __version__ $v" }
+          $v = "v" + (python -c "import stemsplitter; print(stemsplitter.__version__)").Trim()
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne $v) {
+            throw "Tag ${{ github.ref_name }} does not match __version__ $v"
+          }
+          gh release view $v --repo "${{ github.repository }}" *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          "tag=$v" >> $env:GITHUB_OUTPUT
+          "exists=$($exists.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($exists) { "Release $v already exists - nothing to do." } else { "Will release $v" }
 
       - name: Import check
+        if: steps.ver.outputs.exists == 'false'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -c "import onnxruntime, audio_separator.separator; from stemsplitter import engine, gui; print('ok')"
 
       - name: Package
+        if: steps.ver.outputs.exists == 'false'
         shell: pwsh
         run: |
-          $name = "StemSplitter-${{ github.ref_name }}-windows"
+          $name = "StemSplitter-${{ steps.ver.outputs.tag }}-windows"
           $dir = "dist/$name"
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           Copy-Item app.py, requirements.txt, setup.bat, run.bat, run_debug.bat, README.md, LICENSE -Destination $dir
@@ -43,14 +60,18 @@ jobs:
           Get-ChildItem dist
 
       - name: Publish release
+        if: steps.ver.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Stem Splitter ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           files: dist/*.zip
           generate_release_notes: true
           body: |
             ## Download
 
-            1. Download **StemSplitter-${{ github.ref_name }}-windows.zip** below and extract it.
+            1. Download **StemSplitter-${{ steps.ver.outputs.tag }}-windows.zip** below and extract it.
             2. Double-click **run.bat**. The first start installs Python (if needed), PyTorch and the other packages, about 3-4 GB. This happens only once.
             3. Drop songs in and press **Split stems**. Each model downloads the first time it is used.
 
