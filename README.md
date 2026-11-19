@@ -51,13 +51,18 @@ With everything on you get up to 13 stems. **Also keep the full stems** writes t
 - **32-bit float by default.** No clipping, no dither.
 - **Leftover.** What the models don't assign to any stem can be discarded, saved as a `residual` stem, or added to `other`. With either of the last two, the stems null against the original exactly (tested to −150 dBFS).
 
-## Speed
+## Speed and settings
 
-Speed depends almost entirely on the GPU. As one data point, a laptop with an entry-level NVIDIA GPU processed a 4:35 song in **Maximum quality with every extra split on** in about 24 minutes. To go faster:
+Speed depends mostly on the GPU, and especially on its **graphics memory (VRAM)**. When a model doesn't fit, Windows spills it into system RAM, which is many times slower.
 
-- set **Quality** to *Standard*
-- use *6 stems – BS-RoFormer SW* instead of *Maximum quality*
-- turn off extra splits you don't need
+| Setting | Options | Effect |
+|---|---|---|
+| **Precision** | Full (FP32) / Fast (FP16) | FP16 uses about half the VRAM and is usually much faster on NVIDIA GPUs, with a difference that's very hard to hear. Default for GPUs with ≤ 8 GB. |
+| **Quality** | Fast / Standard / High / Extreme | Overlap between processing windows: 2 / 4 / 8 / 16. Each step doubles the time. |
+| **Mode** | Maximum quality vs. BS-RoFormer SW | SW skips the separate vocal pass. |
+| **Extra splits** | on / off | Each one adds a pass. |
+
+Reference: an **RTX A1000 Laptop GPU (4 GB)** with an i7-13700H and 16 GB RAM processed a 4:35 song in *Maximum quality*, *Standard*, FP32, with all three extra splits, in about **24 minutes** (vocals 8:44, 6 stems 4:47, lead/backing 5:36, de-reverb 3:49, drum kit 1:12). On cards with 4–6 GB, use FP16. Measured FP16 numbers from users are welcome: open an issue with your GPU and timings.
 
 ## Run from source
 
@@ -92,7 +97,7 @@ setup.bat / run.bat       installer and launcher
 
 - **`Device: CPU` despite an NVIDIA GPU:** update the GPU driver and run `setup.bat` again.
 - **`No module named …`:** run `setup.bat` again. It only installs what's missing.
-- **CUDA out of memory:** use *Standard* quality or *4 stems – HTDemucs*, and close other GPU-heavy apps.
+- **Very slow on an NVIDIA GPU / CUDA out of memory:** switch **Precision** to FP16, use *Fast* or *Standard* quality, and close other GPU-heavy apps (browsers and games use VRAM too).
 - **AMD / Intel GPU:** run `.venv\Scripts\pip install torch-directml`. The app picks DirectML up automatically.
 - **Model download fails:** check access to github.com and huggingface.co. Models are stored in `%LOCALAPPDATA%\StemSplitter\models`.
 

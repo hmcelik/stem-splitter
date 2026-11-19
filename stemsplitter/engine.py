@@ -118,10 +118,21 @@ PRESETS: dict[str, Preset] = {p.key: p for p in [
 
 QUALITY = {
     # label: (roformer overlap, demucs shifts)
+    "Fast": (2, 1),
     "Standard": (4, 1),
     "High": (8, 2),
     "Extreme": (16, 5),
 }
+
+PRECISIONS = {
+    # label: key
+    "Full (FP32)": "fp32",
+    "Fast (FP16, NVIDIA GPU)": "fp16",
+}
+
+# Models that are not RoFormers: native FP16 is not supported for them in audio-separator,
+# so in FP16 mode they run with mixed precision (autocast) instead.
+NON_ROFORMER_MODELS = {DEMUCS_FT, DRUMSEP_MODEL}
 
 OUTPUT_FORMATS = {
     "WAV 32-bit float": ("wav", "FLOAT"),
@@ -141,6 +152,7 @@ class Job:
     output_format: str = "WAV 32-bit float"
     residual: str = "none"          # "none" | "file" | "other"  (what to do with mix - sum(stems))
     use_directml: bool = False
+    precision: str = "fp32"         # "fp32" | "fp16" (fp16 only applies on CUDA GPUs)
     # extra splits
     split_vocals: bool = False      # vocals -> lead vocals + backing vocals
     dereverb: bool = False          # lead vocals (or vocals) -> dry + reverb
@@ -440,7 +452,32 @@ class Engine:
 
         raise ValueError(preset.key)
 
-    def _get_separator(self, job: Job, overlap: int, shifts: int):
+    @staticmethod
+    def cuda_vram_gb() -> float:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return torch.cuda.get_device_properties(0).total_memory / 1024**3
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def _precision_flags(job: Job, model_file: str) -> tuple[bool, bool]:
+        """(use_native_fp16, use_autocast) for this model."""
+        if job.precision != "fp16" or job.use_directml:
+            return False, False
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return False, False
+        except Exception:
+            return False, False
+        if model_file in NON_ROFORMER_MODELS:
+            return False, True       # mixed precision
+        return True, False           # RoFormer: whole model in FP16 (half the VRAM)
+
+    def _get_separator(self, job: Job, overlap: int, shifts: int, model_file: str):
         ensure_ffmpeg()
         _patch_audio_separator()
         from audio_separator.separator import Separator
@@ -454,8 +491,14 @@ class Engine:
                     job.use_directml = True
             except ImportError:
                 pass
-        key = (overlap, shifts, job.use_directml)
+        native_fp16, autocast = self._precision_flags(job, model_file)
+        key = (overlap, shifts, job.use_directml, native_fp16, autocast)
         if self._sep is None or self._sep_key != key:
+            if self._sep is not None:
+                self._sep = None
+                self._free_gpu()
+            if native_fp16 or autocast:
+                self._emit(f"Precision: {'native FP16' if native_fp16 else 'mixed FP16 (autocast)'}")
             handler_level = logging.INFO
             self._sep = Separator(
                 log_level=handler_level,
@@ -466,7 +509,8 @@ class Engine:
                 amplification_threshold=0.0,
                 sample_rate=MODEL_SR,
                 use_soundfile=True,
-                use_autocast=False,          # full fp32 inference for best quality
+                use_autocast=autocast,
+                use_native_fp16=native_fp16,
                 use_directml=job.use_directml,
                 mdxc_params={"segment_size": 256, "override_model_segment_size": False,
                              "batch_size": 1, "overlap": overlap, "pitch_shift": 0},
@@ -480,7 +524,7 @@ class Engine:
     def _run_model(self, model_file: str, mix44: np.ndarray, job: Job,
                    overlap: int, shifts: int, complement: bool = True) -> dict[str, np.ndarray]:
         self._check_cancel()
-        sep = self._get_separator(job, overlap, shifts)
+        sep = self._get_separator(job, overlap, shifts, model_file)
         if self._loaded_key != model_file:
             self._free_gpu()
             self._emit(f"Loading model {model_file} (downloads on first use)...")
@@ -542,6 +586,7 @@ def main(argv=None):
     ap.add_argument("--dereverb", action="store_true", help="dry + reverb vocal stems")
     ap.add_argument("--split-drums", action="store_true", help="kick, snare, toms, hi-hat, ride, crash")
     ap.add_argument("--no-full", action="store_true", help="don't also write the stems that were split")
+    ap.add_argument("--fp16", action="store_true", help="half precision on NVIDIA GPUs (faster, less VRAM)")
     a = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -556,7 +601,7 @@ def main(argv=None):
         out = (a.output or inp.parent / "stems") / inp.stem
         job = Job(inp, out, a.preset, a.vocal_model, a.quality, a.format, a.residual,
                   split_vocals=a.split_vocals, dereverb=a.dereverb, split_drums=a.split_drums,
-                  keep_full=not a.no_full)
+                  keep_full=not a.no_full, precision="fp16" if a.fp16 else "fp32")
         res = eng.run(job, lambda f, m: print(f"[{f*100:5.1f}%] {m}"))
         print(f"Residual (unassigned) energy: {res.residual_db:.1f} dB")
         for k, p in res.stems.items():

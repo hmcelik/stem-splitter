@@ -314,8 +314,18 @@ class MainWindow(QMainWindow):
             self.vocal_cb.addItem(v, k)
 
         self.quality_cb = QComboBox(); self.quality_cb.addItems(list(eng.QUALITY))
-        self.quality_cb.setToolTip("More overlap / shifts = fewer artefacts, longer processing")
+        self.quality_cb.setToolTip("How much the processing windows overlap: more overlap = fewer artefacts, "
+                                   "longer processing.\nFast ~2x faster than Standard; High ~2x slower; "
+                                   "Extreme ~4x slower.")
         self.format_cb = QComboBox(); self.format_cb.addItems(list(eng.OUTPUT_FORMATS))
+
+        self.precision_cb = QComboBox()
+        for label, key in eng.PRECISIONS.items():
+            self.precision_cb.addItem(label, key)
+        self.precision_cb.setToolTip(
+            "FP16 runs the models in half precision on NVIDIA GPUs: roughly half the graphics "
+            "memory and usually much faster, with a difference that is very hard to hear.\n"
+            "Recommended for GPUs with 8 GB or less. Output files are 32-bit float either way.")
 
         self.residual_cb = QComboBox()
         self.residual_cb.addItem("Discard", "none")
@@ -332,6 +342,7 @@ class MainWindow(QMainWindow):
         form.addRow("", self.preset_desc)
         form.addRow("Vocal model", self.vocal_cb)
         form.addRow("Quality", self.quality_cb)
+        form.addRow("Precision", self.precision_cb)
         form.addRow("Format", self.format_cb)
         form.addRow("Leftover", self.residual_cb)
         form.addRow("Output", out_row)
@@ -416,6 +427,15 @@ class MainWindow(QMainWindow):
         self._restore_combo(self.quality_cb, "quality")
         self._restore_combo(self.format_cb, "format")
         self._restore_combo(self.residual_cb, "residual", data=True)
+        vram = eng.Engine.cuda_vram_gb()
+        if vram <= 0:
+            self.precision_cb.setCurrentIndex(self.precision_cb.findData("fp32"))
+            self.precision_cb.setEnabled(False)
+            self.precision_cb.setToolTip("FP16 needs an NVIDIA GPU")
+        elif self.settings.value("precision") is None:
+            self.precision_cb.setCurrentIndex(self.precision_cb.findData("fp16" if vram <= 8.5 else "fp32"))
+        else:
+            self._restore_combo(self.precision_cb, "precision", data=True)
         for key, chk in self._checks().items():
             v = self.settings.value(key)
             if v is not None:
@@ -441,6 +461,8 @@ class MainWindow(QMainWindow):
         s.setValue("quality", self.quality_cb.currentText())
         s.setValue("format", self.format_cb.currentText())
         s.setValue("residual", self.residual_cb.currentData())
+        if self.precision_cb.isEnabled():
+            s.setValue("precision", self.precision_cb.currentData())
         s.setValue("out_dir", str(self.out_dir))
         for key, chk in self._checks().items():
             s.setValue(key, chk.isChecked())
@@ -516,6 +538,7 @@ class MainWindow(QMainWindow):
                 quality=self.quality_cb.currentText(),
                 output_format=self.format_cb.currentText(),
                 residual=self.residual_cb.currentData(),
+                precision=self.precision_cb.currentData(),
                 split_vocals=self.split_vocals_chk.isChecked(),
                 dereverb=self.dereverb_chk.isChecked(),
                 split_drums=self.split_drums_chk.isChecked() and self.split_drums_chk.isEnabled(),
