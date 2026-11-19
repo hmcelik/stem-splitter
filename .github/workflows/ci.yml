@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (CPU PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Import check
+        run: python -c "import onnxruntime, audio_separator.separator; from stemsplitter import engine, gui, __version__; print('Stem Splitter', __version__)"
+
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\StemSplitter\models
+          key: models-htdemucs_ft
+
+      - name: Smoke test (separation + null test)
+        run: python tests/smoke_test.py demucs4

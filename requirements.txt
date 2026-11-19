@@ -1,0 +1,8 @@
+# PyTorch is installed separately by setup.bat (CUDA build). See README.
+audio-separator[cpu]==0.48.0   # [cpu] pulls onnxruntime, which the library imports unconditionally
+PySide6>=6.7
+soundfile>=0.12
+soxr>=0.4
+numpy
+imageio-ffmpeg
+audioread
